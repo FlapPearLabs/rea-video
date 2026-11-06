@@ -26,3 +26,5 @@
 `credentials` 数组只允许出现环境变量名，不能出现值。
 
 关于哈希与占位符：`assets` 中的 `host-consent-template` 是仓库自带的真实文件 `input/assets/host-consent-template.txt`，其 `status` 为 `present`、`rights` 为 `owned`，`sha256` 是针对该文件计算的真实 SHA-256，用来演示 `present` 素材与真实哈希的写法。其余素材都是 `missing` / `unknown` 占位，`reference.sha256` 也是全零占位符；这些占位值只用于说明结构，不能用于真实项目——参考视频的路径与哈希由 `project init` 针对实际文件生成，真实素材的路径、授权与哈希则在登记实际素材时填写。切勿把全零 SHA-256 或占位素材声明直接当成已登记的真实素材。
+
+已登记产物被 `apply-review` 等流程合法原地重写后如何刷新哈希，见 [docs/structured-projects.md §产物合法演进（artifact refresh）](../../../docs/structured-projects.md)。

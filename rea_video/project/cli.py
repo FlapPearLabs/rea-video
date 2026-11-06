@@ -12,6 +12,7 @@ from .core import (
     create_handoff,
     dispatch_task,
     init_project,
+    refresh_artifact,
     status_project,
     validate_project,
 )
@@ -76,6 +77,11 @@ def _cmd_handoff(args: argparse.Namespace) -> int:
 
 def _cmd_task(args: argparse.Namespace) -> int:
     print(json.dumps(dispatch_task(Path(args.root), args), ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_artifact(args: argparse.Namespace) -> int:
+    print(json.dumps(refresh_artifact(Path(args.root), args), ensure_ascii=False, indent=2))
     return 0
 
 
@@ -161,6 +167,21 @@ def configure_project_parser(parser: argparse.ArgumentParser) -> None:
     p_reclaim.add_argument("--id", required=True)
     _add_coordinator(p_reclaim)
     p_reclaim.set_defaults(project_func=_guard(_cmd_task))
+
+    p_artifact = sub.add_parser("artifact", help="管理已登记产物")
+    artifact_sub = p_artifact.add_subparsers(dest="artifact_cmd", required=True)
+
+    p_refresh = artifact_sub.add_parser(
+        "refresh", help="重新登记被合法改写的产物哈希（仅协调者，append-only 修订）")
+    p_refresh.add_argument("root")
+    p_refresh.add_argument("--id", required=True, help="已登记产物 ID")
+    _add_coordinator(p_refresh)
+    p_refresh.add_argument("--path", default="",
+                           help="可选：产物被移动到新路径时填写；默认沿用已登记路径")
+    p_refresh.add_argument("--reason", default="",
+                           help="合法改写的原因，例如 apply-review 重写了 breakdown.json")
+    p_refresh.add_argument("--by", default="", help="执行者，默认协调者")
+    p_refresh.set_defaults(project_func=_guard(_cmd_artifact))
 
 
 def cmd_project(args: argparse.Namespace) -> int:

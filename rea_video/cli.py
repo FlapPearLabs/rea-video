@@ -536,11 +536,6 @@ def main(argv: list[str] | None = None) -> int:
             raise
         print(f"rea-video: " + T(f"找不到文件：{exc.filename}", f"file not found: {exc.filename}"), file=sys.stderr)
         return 2
-    except (OSError, UnicodeError) as exc:  # project-layer I/O / encoding: one line, not a traceback
-        if args.verbose:
-            raise
-        print(f"rea-video: {exc}", file=sys.stderr)
-        return 2
 
 
 if __name__ == "__main__":

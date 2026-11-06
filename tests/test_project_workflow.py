@@ -560,3 +560,208 @@ def test_blocked_from_a_paid_stage_still_requires_budget_approval(tmp_path, caps
     capsys.readouterr()
     assert main(["project", "validate", str(root)]) == 2
     assert "付费生成阶段" in capsys.readouterr().err
+
+
+# --- finding-scoped repair: P1 artifact refresh, P2/P3 hardenings ---
+
+def _refresh(root, artifact_id="breakdown", coordinator=COORDINATOR, **extra):
+    cmd = ["project", "artifact", "refresh", str(root), "--id", artifact_id,
+           "--coordinator", coordinator]
+    for key, value in extra.items():
+        cmd += ["--" + key.replace("_", "-"), value]
+    return main(cmd)
+
+
+def test_apply_review_rewrite_is_recoverable_via_artifact_refresh(tmp_path, capsys):
+    """P1: the documented `apply-review` flow must not deadlock the project."""
+    root = _bootstrap(tmp_path, capsys)
+    breakdown = root / "analysis/breakdown.json"
+    breakdown.write_text(json.dumps({"shots": 7}), encoding="utf-8")
+    assert _handoff(root, "decomposed", "analysis-agent", "breakdown",
+                    "analysis/breakdown.json") == 0
+    original_sha = _sha(breakdown)
+
+    # `apply-review` rewrites breakdown.json in place (original CLI behaviour).
+    breakdown.write_text(json.dumps({"shots": 7, "reviewed": True}), encoding="utf-8")
+    assert main(["project", "validate", str(root)]) == 2
+    assert _handoff(root, "reviewed", "review-agent", "review", "analysis/breakdown.json") == 2
+    assert _create_task(root, "asset-blocked") == 2  # preflight chain failure
+
+    assert _refresh(root, reason="apply-review 重写了 breakdown.json", by="review-agent") == 0
+    assert main(["project", "validate", str(root)]) == 0
+
+    project = json.loads((root / "project.json").read_text(encoding="utf-8"))
+    revisions = project["artifact_revisions"]
+    assert len(revisions) == 1
+    assert revisions[0]["sequence"] == 1
+    assert revisions[0]["sha256_before"] == original_sha
+    assert revisions[0]["sha256_after"] == _sha(breakdown)
+    assert revisions[0]["reason"] == "apply-review 重写了 breakdown.json"
+    assert project["artifacts"]["breakdown"]["sha256"] == _sha(breakdown)
+    # Historical handoff keeps the original (append-only) snapshot.
+    handoff = json.loads((root / "handoff/0001-decomposed.json").read_text(encoding="utf-8"))
+    assert handoff["artifacts"][0]["sha256"] == original_sha
+
+    # Workflow resumes: further handoffs and tasks work again.
+    assert _handoff(root, "reviewed", "review-agent", "review", "analysis/breakdown.json") == 0
+    assert _create_task(root, "asset-ok") == 0
+    assert main(["project", "validate", str(root)]) == 0
+
+
+def test_artifact_refresh_enforces_coordinator_id_and_noop(tmp_path, capsys):
+    root = _bootstrap(tmp_path, capsys)
+    (root / "analysis/breakdown.json").write_text(json.dumps({"shots": 1}), encoding="utf-8")
+    assert _handoff(root, "decomposed", "analysis-agent", "breakdown",
+                    "analysis/breakdown.json") == 0
+
+    assert _refresh(root, coordinator="worker-agent") == 2
+    assert _refresh(root, artifact_id="does-not-exist") == 2
+    assert _refresh(root) == 2  # content unchanged -> no empty revision
+
+    (root / "analysis/breakdown.json").write_text(json.dumps({"shots": 2}), encoding="utf-8")
+    with pytest.raises(SystemExit):  # --coordinator is mandatory
+        main(["project", "artifact", "refresh", str(root), "--id", "breakdown"])
+    assert _refresh(root) == 0
+    assert main(["project", "validate", str(root)]) == 0
+
+
+def test_artifact_refresh_supports_path_move_and_multiple_revisions(tmp_path, capsys):
+    root = _bootstrap(tmp_path, capsys)
+    old = root / "analysis/breakdown.json"
+    old.write_text(json.dumps({"v": 1}), encoding="utf-8")
+    assert _handoff(root, "decomposed", "agent-1", "breakdown", "analysis/breakdown.json") == 0
+    new = root / "analysis/breakdown-v2.json"
+    new.write_text(json.dumps({"v": 2}), encoding="utf-8")
+    assert _refresh(root, path="analysis/breakdown-v2.json", reason="迁移到 v2") == 0
+    assert main(["project", "validate", str(root)]) == 0
+    project = json.loads((root / "project.json").read_text(encoding="utf-8"))
+    assert project["artifacts"]["breakdown"]["path"] == "analysis/breakdown-v2.json"
+
+    new.write_text(json.dumps({"v": 3}), encoding="utf-8")
+    assert _refresh(root, reason="第二次合法改写") == 0
+    assert main(["project", "validate", str(root)]) == 0
+    revisions = json.loads((root / "project.json").read_text(encoding="utf-8"))["artifact_revisions"]
+    assert [r["sequence"] for r in revisions] == [1, 2]
+    assert revisions[1]["sha256_before"] == revisions[0]["sha256_after"]
+
+
+def test_artifact_tampering_without_refresh_is_still_rejected(tmp_path, capsys):
+    """refresh must not weaken tamper detection for unrecorded changes."""
+    root = _bootstrap(tmp_path, capsys)
+    breakdown = root / "analysis/breakdown.json"
+    breakdown.write_text(json.dumps({"v": 1}), encoding="utf-8")
+    assert _handoff(root, "decomposed", "agent-1", "breakdown", "analysis/breakdown.json") == 0
+    assert _refresh(root, reason="合法复核") == 2  # no change yet
+    breakdown.write_text(json.dumps({"v": 2}), encoding="utf-8")
+    assert _refresh(root, reason="合法复核") == 0
+    breakdown.write_text(json.dumps({"v": 3}), encoding="utf-8")  # unrecorded
+    capsys.readouterr()
+    assert main(["project", "validate", str(root)]) == 2
+    assert "哈希不符" in capsys.readouterr().err
+
+
+def test_revision_chain_tampering_is_detected(tmp_path, capsys):
+    root = _bootstrap(tmp_path, capsys)
+    breakdown = root / "analysis/breakdown.json"
+    breakdown.write_text(json.dumps({"v": 1}), encoding="utf-8")
+    assert _handoff(root, "decomposed", "agent-1", "breakdown", "analysis/breakdown.json") == 0
+    breakdown.write_text(json.dumps({"v": 2}), encoding="utf-8")
+    assert _refresh(root, reason="合法复核") == 0
+
+    project_path = root / "project.json"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    project["artifact_revisions"][0]["sha256_after"] = "0" * 64
+    project_path.write_text(json.dumps(project, ensure_ascii=False, indent=2), encoding="utf-8")
+    capsys.readouterr()
+    assert main(["project", "validate", str(root)]) == 2
+    assert "修订" in capsys.readouterr().err
+
+
+def test_plaintext_password_and_free_text_credentials_are_rejected(tmp_path, capsys):
+    root = _bootstrap(tmp_path, capsys)
+    brief = root / "input/brief.md"
+    brief.write_text(brief.read_text(encoding="utf-8") + "\npassword: hunter2\n", encoding="utf-8")
+    capsys.readouterr()
+    assert main(["project", "validate", str(root)]) == 2
+    assert "密钥" in capsys.readouterr().err
+
+
+def test_task_output_and_present_asset_secrets_are_rejected(tmp_path, capsys):
+    root = _bootstrap(tmp_path, capsys)
+    assert _create_task(root, "asset-sec") == 0
+    assert main(["project", "task", "claim", str(root), "--id", "asset-sec", "--by", "agent-a"]) == 0
+    output = root / "work/asset-sec/out.json"
+    output.write_text(json.dumps({"token": "sk-abcdefghijklmnopqrstuvwxyz"}), encoding="utf-8")
+    assert main(["project", "task", "complete", str(root), "--id", "asset-sec",
+                 "--by", "agent-a", "--output", "work/asset-sec/out.json"]) == 0
+    capsys.readouterr()
+    assert main(["project", "validate", str(root)]) == 2
+    assert "任务产物 asset-sec" in capsys.readouterr().err
+
+    # restore output, then register a `present` asset containing a credential
+    output.write_text(json.dumps({"ok": True}), encoding="utf-8")
+    asset = root / "input/assets/notes.md"
+    asset.write_text("DB_PASSWORD=correct horse\n", encoding="utf-8")
+    manifest_path = root / "input/input.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["assets"] = [{"id": "notes", "kind": "document", "path": "input/assets/notes.md",
+                           "required": False, "status": "present", "rights": "owned",
+                           "sha256": _sha(asset)}]
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    capsys.readouterr()
+    assert main(["project", "validate", str(root)]) == 2
+    assert "素材 notes" in capsys.readouterr().err
+
+
+def test_single_field_coordinator_takeover_is_anchored_in_handoff_md(tmp_path, capsys):
+    root = _bootstrap(tmp_path, capsys)
+    project_path = root / "project.json"
+    forged = json.loads(project_path.read_text(encoding="utf-8"))
+    forged["coordinator"] = "worker-agent"
+    project_path.write_text(json.dumps(forged, ensure_ascii=False, indent=2), encoding="utf-8")
+    capsys.readouterr()
+    assert main(["project", "validate", str(root)]) == 2
+    assert "HANDOFF.md" in capsys.readouterr().err
+    assert _handoff(root, "decomposed", "worker-agent", "a1", coordinator="worker-agent") == 2
+
+
+def test_noncanonical_write_scopes_and_orphan_task_files_are_detected(tmp_path, capsys):
+    root = _bootstrap(tmp_path, capsys)
+    assert _create_task(root, "asset-a") == 0
+    assert _create_task(root, "asset-b") == 0
+    second = root / "work/asset-b/task.json"
+    task = json.loads(second.read_text(encoding="utf-8"))
+    task["write_paths"] = ["work//asset-a"]
+    second.write_text(json.dumps(task, ensure_ascii=False, indent=2), encoding="utf-8")
+    capsys.readouterr()
+    assert main(["project", "validate", str(root)]) == 2
+    assert "冲突" in capsys.readouterr().err
+
+    # dropping a task from the index must not hide it from conflict checks
+    project_path = root / "project.json"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    project["tasks"].pop("asset-b")
+    project_path.write_text(json.dumps(project, ensure_ascii=False, indent=2), encoding="utf-8")
+    capsys.readouterr()
+    assert main(["project", "validate", str(root)]) == 2
+    assert "未登记的任务文件" in capsys.readouterr().err
+
+
+def test_mixed_acceptance_and_invalid_blocked_from_are_rejected(tmp_path, capsys):
+    root = _bootstrap(tmp_path, capsys)
+    (root / "analysis/stage.json").write_text('{"ok": true}', encoding="utf-8")
+    assert _handoff(root, "decomposed", "agent-1", "a1") == 0
+    handoff_path = root / "handoff/0001-decomposed.json"
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    handoff["acceptance"].append({"check": "extra", "status": "failed", "evidence": "未通过"})
+    handoff_path.write_text(json.dumps(handoff, ensure_ascii=False, indent=2), encoding="utf-8")
+    from rea_video.project.core import render_handoff_md
+    (root / "handoff/0001-decomposed.md").write_text(render_handoff_md(handoff), encoding="utf-8")
+    assert main(["project", "validate", str(root)]) == 2
+
+    project_path = root / "project.json"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    project["state"] = "blocked"
+    project["blocked_from"] = None
+    project_path.write_text(json.dumps(project, ensure_ascii=False, indent=2), encoding="utf-8")
+    assert main(["project", "validate", str(root)]) == 2

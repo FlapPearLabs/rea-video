@@ -62,6 +62,42 @@
     },
     "handoffs": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "current_handoff": {"type": ["string", "null"]},
-    "current_handoff_md": {"const": "HANDOFF.md"}
-  }
+    "current_handoff_md": {"const": "HANDOFF.md"},
+    "artifact_revisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schema_version", "sequence", "artifact_id", "path_before", "path_after",
+                     "sha256_before", "sha256_after", "created_at", "coordinator", "by", "reason"],
+        "properties": {
+          "schema_version": {"const": "1.0.0"},
+          "sequence": {"type": "integer", "minimum": 1},
+          "artifact_id": {"type": "string", "minLength": 1},
+          "path_before": {"type": "string", "minLength": 1},
+          "path_after": {"type": "string", "minLength": 1},
+          "sha256_before": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "sha256_after": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "created_at": {"type": "string", "minLength": 1},
+          "coordinator": {"type": "string", "minLength": 1},
+          "by": {"type": "string", "minLength": 1},
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"state": {"const": "blocked"}}, "required": ["state"]},
+      "then": {
+        "properties": {
+          "blocked_from": {
+            "enum": ["initialized", "input_validated", "decomposed", "reviewed", "planned",
+                     "remaking", "assembled", "verified", "delivered"]
+          }
+        },
+        "required": ["blocked_from"]
+      }
+    }
+  ]
 }

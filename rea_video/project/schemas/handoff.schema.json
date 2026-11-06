@@ -70,6 +70,13 @@
               "type": "object",
               "required": ["status"],
               "properties": {"status": {"const": "passed"}}
+            },
+            "not": {
+              "contains": {
+                "type": "object",
+                "required": ["status"],
+                "properties": {"status": {"const": "failed"}}
+              }
             }
           },
           "next_actions": {"minItems": 1}

@@ -40,6 +40,15 @@ SECRET_VALUE = re.compile(
     r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|"
     r"Bearer\s+[A-Za-z0-9._-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)"
 )
+# Plaintext credential assignments in free text (brief.md, task outputs, assets):
+# `password: hunter2`, `DB_PASSWORD=correct horse`, `api_key = ...`.
+# The negative lookahead avoids flagging our own acceptance syntax `check=passed:...`.
+SECRET_ASSIGNMENT = re.compile(
+    # `(?<![A-Za-z0-9])` rather than `\b`: `DB_PASSWORD=...` has an underscore
+    # before PASSWORD, which is a word character, so `\b` would not match.
+    r"(?i)(?<![A-Za-z0-9])(?:password|passwd|pwd|secret|api[_-]?key|access[_-]?token|token)"
+    r"\s*[:=]\s*(?!passed\b|failed\b)[\"']?[^\s\"',;]{4,}"
+)
 PROFILE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 TASK_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{1,48}$")
 TEXT_SCAN_SUFFIXES = {".json", ".md", ".txt", ".yaml", ".yml", ".csv", ".srt", ".ass", ".html", ".htm"}
@@ -281,7 +290,7 @@ def _reject_secret_keys(value: Any, label: str, where: str = "$") -> None:
     elif isinstance(value, list):
         for i, child in enumerate(value):
             _reject_secret_keys(child, label, f"{where}[{i}]")
-    elif isinstance(value, str) and SECRET_VALUE.search(value):
+    elif isinstance(value, str) and (SECRET_VALUE.search(value) or SECRET_ASSIGNMENT.search(value)):
         raise ProjectError(f"{label} 疑似包含密钥值：{where}")
 
 
@@ -295,7 +304,8 @@ def _require_coordinator(project: dict[str, Any], supplied: str, action: str) ->
 
 def _snapshot_matches(before: dict[str, Any], current: dict[str, Any]) -> bool:
     keys = ("state", "coordinator", "paid_generation", "blocked_from", "blocked_reason",
-            "artifacts", "tasks", "handoffs", "current_handoff", "current_handoff_md")
+            "artifacts", "tasks", "handoffs", "current_handoff", "current_handoff_md",
+            "artifact_revisions")
     return all(before.get(key) == current.get(key) for key in keys)
 
 
@@ -374,6 +384,7 @@ def init_project(root: Path, reference: Path, title: str, profile: str, coordina
         "artifacts": {},
         "tasks": {},
         "handoffs": [],
+        "artifact_revisions": [],
         "current_handoff": None,
         "current_handoff_md": "HANDOFF.md",
     }
@@ -419,6 +430,80 @@ def approve_paid_generation(root: Path, approved_by: str, scope: str,
     return {"approved": True, "approved_by": approved_by, "scope": scope, "approved_at": stamp}
 
 
+def refresh_artifact(root: Path, args: Any) -> dict[str, Any]:
+    """Re-register the hash of a legitimately rewritten artifact.
+
+    The original pipeline rewrites `breakdown.json` in place (`apply-review`),
+    and `assemble` can overwrite registered outputs. Historical handoffs are
+    append-only snapshots, so their recorded hashes cannot be edited. This is
+    the only supported recovery path: the coordinator explicitly records the
+    old -> new hash transition, and `validate_project` replays that chain.
+    """
+    root = Path(root).expanduser().resolve()
+    preflight = validate_project(root, advance=False, allow_artifact_drift=True)
+    if preflight["errors"]:
+        raise ProjectError("前序项目校验失败：" + "；".join(preflight["errors"]))
+    artifact_id = args.id
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", artifact_id):
+        raise ProjectError(f"产物 ID 无效：{artifact_id!r}")
+    reason = (args.reason or "产物被合法改写，重新登记哈希").strip()
+    by = (args.by or args.coordinator).strip()
+    before = _read_json(root / "project.json")
+    with _lock(root / "project.json"):
+        project = _read_json(root / "project.json")
+        if not _snapshot_matches(before, project):
+            raise ProjectError("项目状态已被其他协调者更新；请重新运行 project status 后再刷新")
+        _require_coordinator(project, args.coordinator, "刷新产物哈希")
+        entry = project["artifacts"].get(artifact_id)
+        if entry is None:
+            raise ProjectError(f"产物未登记，无法刷新：{artifact_id!r}")
+        path_before = entry["path"]
+        new_rel = _relative_path(root, args.path or path_before, "产物路径")
+        new_path = _project_file(root, new_rel, "产物路径")
+        if not new_path.is_file():
+            raise ProjectError(f"产物文件不存在：{new_rel}")
+        sha256_before = entry["sha256"]
+        sha256_after = _sha256(new_path)
+        if new_rel == path_before and sha256_after == sha256_before:
+            raise ProjectError(
+                f"产物 {artifact_id!r} 内容与路径均未变化，无需刷新；"
+                "若确已改写，请确认改写落在登记的路径上"
+            )
+        revisions = project.get("artifact_revisions", [])
+        revision = {
+            "schema_version": SCHEMA_VERSION,
+            "sequence": len(revisions) + 1,
+            "artifact_id": artifact_id,
+            "path_before": path_before,
+            "path_after": new_rel,
+            "sha256_before": sha256_before,
+            "sha256_after": sha256_after,
+            "created_at": _now(),
+            "coordinator": project["coordinator"],
+            "by": by,
+            "reason": reason,
+        }
+        _reject_secret_keys(revision, "产物修订")
+        project["artifact_revisions"] = revisions + [revision]
+        project["artifacts"][artifact_id] = {
+            "path": new_rel, "sha256": sha256_after,
+            "kind": entry["kind"], "stage": entry["stage"],
+        }
+        project["updated_at"] = revision["created_at"]
+        _validate_document(project, "project.schema.json", "project.json")
+        current_handoff = _load_current_handoff(root, project)
+        _write_json(root / "project.json", project)
+        _write_text(root / "HANDOFF.md", render_current_handoff_md(project, current_handoff))
+    return {
+        "artifact": artifact_id,
+        "sequence": revision["sequence"],
+        "path": new_rel,
+        "sha256_before": sha256_before,
+        "sha256_after": sha256_after,
+        "revisions": len(project["artifact_revisions"]),
+    }
+
+
 def render_current_handoff_md(project: dict[str, Any], handoff: dict[str, Any] | None = None) -> str:
     lines = [
         "# 当前交接",
@@ -426,6 +511,11 @@ def render_current_handoff_md(project: dict[str, Any], handoff: dict[str, Any] |
         f"- 项目：{project['title']}",
         f"- 状态：`{project['state']}`",
         f"- 项目配置：`{project['profile']}`",
+        # Anchoring these two values in the generated MD means editing only
+        # project.json (coordinator takeover / revision injection) is rejected
+        # by the MD-equality check in validate_project.
+        f"- 协调者：`{project['coordinator']}`",
+        f"- 产物修订：{len(project.get('artifact_revisions', []))} 条",
     ]
     if handoff:
         hjson = project["current_handoff"]
@@ -482,6 +572,60 @@ def _scan_text_file(path: Path, label: str, errors: list[str]) -> None:
 
 
 PAID_STAGES = ("remaking", "assembled", "verified", "delivered")
+
+
+def _superseded_artifact_pairs(project: dict[str, Any]) -> set[tuple[str, str]]:
+    """(path, sha256) snapshots explicitly replaced by an audited revision.
+
+    Historical handoffs are append-only and keep the hash that was valid when
+    they were written. A file legitimately rewritten by `apply-review` therefore
+    no longer matches those snapshots; only hashes recorded in the revision
+    chain may be exempted from the equality check.
+    """
+    pairs: set[tuple[str, str]] = set()
+    for revision in project.get("artifact_revisions", []):
+        pairs.add((revision["path_before"], revision["sha256_before"]))
+        pairs.add((revision["path_after"], revision["sha256_after"]))
+    return pairs
+
+
+def _check_revision_chain(root: Path, project: dict[str, Any],
+                          loaded: dict[str, dict[str, Any]], errors: list[str]) -> None:
+    """Revision history is append-only and must form a verifiable chain."""
+    revisions = project.get("artifact_revisions", [])
+    if not revisions:
+        return
+    historical = {
+        (artifact["path"], artifact["sha256"])
+        for handoff in loaded.values() for artifact in handoff.get("artifacts", [])
+    }
+    for index, revision in enumerate(revisions, 1):
+        if revision.get("sequence") != index:
+            errors.append(f"产物修订序号不连续：第 {index} 条应为 {index}")
+        if revision.get("coordinator") != project["coordinator"]:
+            errors.append(f"产物修订协调者与 project.json 不一致：第 {index} 条")
+        if revision.get("artifact_id") not in project["artifacts"]:
+            errors.append(f"产物修订指向未登记产物：{revision.get('artifact_id')!r}")
+        for key in ("path_before", "path_after"):
+            try:
+                _relative_path(root, revision[key], f"产物修订 {key}")
+            except ProjectError as exc:
+                errors.append(str(exc))
+    chains: dict[str, list[dict[str, Any]]] = {}
+    for revision in revisions:
+        chains.setdefault(revision["artifact_id"], []).append(revision)
+    for artifact_id, chain in chains.items():
+        first = chain[0]
+        if (first["path_before"], first["sha256_before"]) not in historical:
+            errors.append(f"产物修订起点未锚定到历史交接：{artifact_id}")
+        for previous, current in zip(chain, chain[1:]):
+            if (current["sha256_before"] != previous["sha256_after"]
+                    or current["path_before"] != previous["path_after"]):
+                errors.append(f"产物修订链断裂：{artifact_id}")
+        entry = project["artifacts"].get(artifact_id)
+        if entry and (chain[-1]["sha256_after"] != entry["sha256"]
+                      or chain[-1]["path_after"] != entry["path"]):
+            errors.append(f"产物修订终点与当前登记不一致：{artifact_id}")
 
 
 def _check_handoff_chain(project: dict[str, Any], loaded: dict[str, dict[str, Any]],
@@ -541,6 +685,9 @@ def _check_project_invariants(project: dict[str, Any], loaded: dict[str, dict[st
         if not (paid["approved_at"] and paid["scope"] and paid["confirmation"]):
             errors.append("付费生成批准记录缺少批准时间、范围或确认内容")
 
+    if state == "blocked" and project.get("blocked_from") not in STAGES:
+        errors.append("blocked 项目必须记录有效的 blocked_from，不能为空或非法值")
+
     effective = project.get("blocked_from") if state == "blocked" else state
     if effective in PAID_STAGES and not paid["approved"]:
         errors.append(
@@ -549,10 +696,19 @@ def _check_project_invariants(project: dict[str, Any], loaded: dict[str, dict[st
         )
 
 
-def validate_project(root: Path, advance: bool = False) -> dict[str, Any]:
+def validate_project(root: Path, advance: bool = False,
+                     allow_artifact_drift: bool = False) -> dict[str, Any]:
+    """Full contract check.
+
+    `allow_artifact_drift` is used ONLY by `artifact refresh`: it downgrades
+    artifact hash mismatches to warnings so that refresh can repair a legitimately
+    rewritten file. Every other invariant stays fail-closed.
+    """
     root = Path(root).expanduser().resolve()
     errors: list[str] = []
     warnings: list[str] = []
+    drift_notes: list[str] = []
+    hash_errors = drift_notes if allow_artifact_drift else errors
     try:
         project = _read_json(root / "project.json")
         _validate_document(project, "project.schema.json", "project.json")
@@ -584,15 +740,31 @@ def validate_project(root: Path, advance: bool = False) -> dict[str, Any]:
                     errors.append(f"素材哈希不符：{asset['id']}")
                 elif not asset.get("sha256"):
                     warnings.append(f"素材 {asset['id']} 未记录 sha256")
+                _scan_text_file(path, f"素材 {asset['id']}", errors)
             if asset["rights"] == "unknown":
                 warnings.append(f"素材 {asset['id']} 的授权状态仍为 unknown")
         for artifact_id, artifact in project["artifacts"].items():
             _relative_path(root, artifact["path"], f"产物 {artifact_id}")
-            _check_hash(root, artifact["path"], artifact["sha256"], f"产物 {artifact_id}", errors)
+            _check_hash(root, artifact["path"], artifact["sha256"], f"产物 {artifact_id}", hash_errors)
             _scan_text_file(_project_file(root, artifact["path"], f"产物 {artifact_id}"),
                             f"产物 {artifact_id}", errors)
         tasks = _load_tasks(root, project)
         _check_task_conflicts(tasks)
+        # A task file that exists on disk but is no longer indexed must not be
+        # allowed to escape conflict checks (direct-edit attack model).
+        work_dir = _project_file(root, "work", "任务目录") if (root / "work").is_dir() else None
+        if work_dir:
+            indexed = set(project["tasks"].values())
+            for orphan in sorted(work_dir.glob("*/task.json")):
+                rel = orphan.relative_to(root).as_posix()
+                if rel not in indexed:
+                    errors.append(f"存在未登记的任务文件：{rel}")
+        for task_id, task in tasks.items():
+            for output_rel in task.get("outputs", []):
+                _relative_path(root, output_rel, f"任务产物 {task_id}")
+                _scan_text_file(_project_file(root, output_rel, f"任务产物 {task_id}"),
+                                f"任务产物 {task_id}", errors)
+        superseded = _superseded_artifact_pairs(project)
         loaded_handoffs: dict[str, dict[str, Any]] = {}
         for handoff_rel in project["handoffs"]:
             handoff_path = _project_file(root, handoff_rel, "交接")
@@ -603,13 +775,17 @@ def validate_project(root: Path, advance: bool = False) -> dict[str, Any]:
             for input_rel in handoff["inputs"]:
                 _relative_path(root, input_rel, "交接输入")
             for artifact in handoff["artifacts"]:
-                _check_hash(root, artifact["path"], artifact["sha256"], f"交接产物 {artifact['id']}", errors)
+                _relative_path(root, artifact["path"], f"交接产物 {artifact['id']}")
+                if (artifact["path"], artifact["sha256"]) not in superseded:
+                    _check_hash(root, artifact["path"], artifact["sha256"],
+                                f"交接产物 {artifact['id']}", hash_errors)
                 _scan_text_file(_project_file(root, artifact["path"], f"交接产物 {artifact['id']}"),
                                 f"交接产物 {artifact['id']}", errors)
             md_path = handoff_path.with_suffix(".md")
             if not md_path.is_file() or _read_text(md_path) != render_handoff_md(handoff):
                 errors.append(f"交接摘要与 JSON 不一致：{handoff_rel}")
             _scan_text_file(md_path, f"{handoff_rel}.md", errors)
+        _check_revision_chain(root, project, loaded_handoffs, errors)
         _check_handoff_chain(project, loaded_handoffs, errors)
         _check_project_invariants(project, loaded_handoffs, errors)
         current_handoff = _load_current_handoff(root, project, loaded_handoffs)
@@ -634,6 +810,8 @@ def validate_project(root: Path, advance: bool = False) -> dict[str, Any]:
     if not actual_md_path.is_file() or _read_text(actual_md_path) != expected_md:
         errors.append(f"HANDOFF.md 与 project.json 不一致：{project['current_handoff_md']}")
     _scan_text_file(actual_md_path, "HANDOFF.md", errors)
+    if allow_artifact_drift:
+        warnings.extend(drift_notes)
 
     return {
         "state": project["state"],
@@ -865,7 +1043,13 @@ def create_handoff(root: Path, args: Any) -> dict[str, Any]:
             "state": state_after, "artifacts": [a["id"] for a in artifacts]}
 
 
+def _scope_key(value: str) -> str:
+    """Canonical POSIX form so `work//a`, `work/./a` and `work/a` collide."""
+    return str(PurePosixPath(value)).rstrip("/")
+
+
 def _scope_overlap(a: str, b: str) -> bool:
+    a, b = _scope_key(a), _scope_key(b)
     return a == b or a.startswith(b + "/") or b.startswith(a + "/")
 
 

@@ -101,7 +101,7 @@ rea-video capsule-draft out/ref/breakdown.json --capsule-root $CC --capsule-name
 | `remake-plan` / `assemble` | 生成复刻任务、拼回成片 |
 | `remake-run JOBS [--dry-run] [--only 2,5\|shot_002] [--capsule-root]` | 用 capsule-cinema 执行复刻任务（会计费）；有镜头没生成出视频时退出码非 0 |
 | `capsule-draft breakdown.json` | 生成 capsule-cinema 胶囊草稿 |
-| `project init\|validate\|status\|approve\|handoff\|task create\|claim\|complete\|block\|reclaim ...` | 结构化项目：输入契约、状态机、付费生成确认、机器权威交接与受控并行任务。`approve`、`handoff`、`task create`、`task reclaim` 必须带 `--coordinator`（须与 `project.json` 的 `coordinator` 一致），进入 `remaking` 前必须先 `approve`；详见 [structured-projects.md](structured-projects.md) |
+| `project init\|validate\|status\|approve\|handoff\|artifact refresh\|task create\|claim\|complete\|block\|reclaim ...` | 结构化项目：输入契约、状态机、付费生成确认、机器权威交接与受控并行任务。`approve`、`handoff`、`artifact refresh`、`task create`、`task reclaim` 必须带 `--coordinator`（须与 `project.json` 的 `coordinator` 一致），进入 `remaking` 前必须先 `approve`；其中 `artifact refresh` 为协调者专属（coordinator-only），用于重新登记被合法原地重写的已登记产物的 SHA-256 并追加 append-only 修订记录；详见 [structured-projects.md](structured-projects.md) |
 
 ## 工作流（设计目标；目前完成到拆解和 AI 镜头复刻）
 
