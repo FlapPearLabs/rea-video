@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/FlapPearLabs/rea-video/schemas/project.schema.json",
+  "title": "rea-video structured project state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "project_id", "title", "profile", "state",
+    "coordinator", "paid_generation", "created_at", "updated_at",
+    "inputs", "artifacts", "tasks", "handoffs",
+    "current_handoff", "current_handoff_md"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "project_id": {"type": "string", "minLength": 1},
+    "title": {"type": "string", "minLength": 1},
+    "profile": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
+    "state": {"enum": ["initialized", "input_validated", "decomposed", "reviewed", "planned", "remaking", "assembled", "verified", "delivered", "blocked"]},
+    "coordinator": {"type": "string", "minLength": 1},
+    "paid_generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approved", "approved_by", "approved_at", "scope", "confirmation"],
+      "properties": {
+        "approved": {"type": "boolean"},
+        "approved_by": {"type": ["string", "null"]},
+        "approved_at": {"type": ["string", "null"]},
+        "scope": {"type": ["string", "null"]},
+        "confirmation": {"type": ["string", "null"]}
+      }
+    },
+    "blocked_from": {"type": ["string", "null"]},
+    "blocked_reason": {"type": ["string", "null"]},
+    "created_at": {"type": "string", "minLength": 1},
+    "updated_at": {"type": "string", "minLength": 1},
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest", "brief"],
+      "properties": {
+        "manifest": {"const": "input/input.json"},
+        "brief": {"const": "input/brief.md"}
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "kind", "stage"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "kind": {"enum": ["analysis", "media", "plan", "handoff", "output", "other"]},
+          "stage": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "tasks": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "handoffs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "current_handoff": {"type": ["string", "null"]},
+    "current_handoff_md": {"const": "HANDOFF.md"}
+  }
+}

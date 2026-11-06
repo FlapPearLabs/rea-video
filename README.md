@@ -210,6 +210,7 @@ No. rea-video is for learning a video's structure, pacing and techniques, then r
 ## Docs
 
 - [docs/what-it-detects.md](docs/what-it-detects.md): everything it detects (10 visual types, camera, lighting, grade, audio)
+- [docs/structured-projects.md](docs/structured-projects.md): structured inputs, project state, machine-readable handoffs and cooperative task ownership
 - [docs/replicate.md](docs/replicate.md): remaking from the report
 - [docs/cases.md](docs/cases.md): case details
 - [docs/decompose.md](docs/decompose.md): detection rules
