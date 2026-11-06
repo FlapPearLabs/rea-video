@@ -506,6 +506,12 @@ def main(argv: list[str] | None = None) -> int:
     me.add_argument("--export-labels", metavar="YAML")
     me.set_defaults(func=cmd_memory)
 
+    from .project.cli import cmd_project, configure_project_parser
+
+    pj = sub.add_parser("project", help="结构化项目：输入、状态、交接与受控并行任务")
+    configure_project_parser(pj)
+    pj.set_defaults(func=cmd_project)
+
     for sp in sub.choices.values():  # also accept `rea-video decompose x.mp4 --env-file ...`
         sp.add_argument("--env-file", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
 

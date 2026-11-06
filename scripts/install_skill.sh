@@ -63,15 +63,19 @@ for home in "$HOME/.claude" "$HOME/.codex" "$HOME/.agents"; do
   [ -d "$home" ] && targets+=("$home/skills")
 done
 [ ${#targets[@]} -eq 0 ] && targets=("$HOME/.claude/skills")
-for dir in "${targets[@]}"; do
-  mkdir -p "$dir"
-  dest="$dir/rea-video"
-  if [ -e "$dest" ] && [ ! -L "$dest" ]; then
-    # ln -sfn 遇到真实目录会把链接建到它里面，还报成功
-    echo "⚠ $dest 是一个真实目录（旧的手动拷贝？），跳过。删掉或改名后重跑。" >&2
-    continue
-  fi
-  ln -sfn "$ROOT/skills/rea-video" "$dest"
-  echo "linked $dest"
+for skill_dir in "$ROOT"/skills/rea-video*; do
+  [ -d "$skill_dir" ] || continue
+  skill_name="$(basename "$skill_dir")"
+  for dir in "${targets[@]}"; do
+    mkdir -p "$dir"
+    dest="$dir/$skill_name"
+    if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+      # ln -sfn 遇到真实目录会把链接建到它里面，还报成功
+      echo "⚠ $dest 是一个真实目录（旧的手动拷贝？），跳过。删掉或改名后重跑。" >&2
+      continue
+    fi
+    ln -sfn "$skill_dir" "$dest"
+    echo "linked $dest"
+  done
 done
-echo "done. 试试：rea-video --help"
+echo "done. 试试：rea-video --help 与 rea-video project --help"

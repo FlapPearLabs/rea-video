@@ -1,0 +1,107 @@
+{
+  "schema_version": "1.0.0",
+  "profile": "store_visit",
+  "reference": {
+    "id": "reference",
+    "path": "input/reference/reference.mp4",
+    "media_type": "video",
+    "required": true,
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "assets": [
+    {
+      "id": "host-front",
+      "kind": "person",
+      "path": "input/assets/host-front.jpg",
+      "required": true,
+      "status": "missing",
+      "rights": "unknown",
+      "notes": "出镜人物正面照，用于跨镜头身份一致性"
+    },
+    {
+      "id": "host-half",
+      "kind": "person",
+      "path": "input/assets/host-half.jpg",
+      "required": true,
+      "status": "missing",
+      "rights": "unknown",
+      "notes": "出镜人物半身照，用于服装与体态一致性"
+    },
+    {
+      "id": "store-exterior",
+      "kind": "scene",
+      "path": "input/assets/store-exterior.jpg",
+      "required": true,
+      "status": "missing",
+      "rights": "unknown",
+      "notes": "门店门头；不得出现未经授权的其他品牌或路人肖像"
+    },
+    {
+      "id": "store-interior",
+      "kind": "scene",
+      "path": "input/assets/store-interior.jpg",
+      "required": true,
+      "status": "missing",
+      "rights": "unknown"
+    },
+    {
+      "id": "signature-dish",
+      "kind": "product",
+      "path": "input/assets/signature-dish.jpg",
+      "required": true,
+      "status": "missing",
+      "rights": "unknown",
+      "notes": "招牌菜品；外观、摆盘和包装须与最终文案一致"
+    },
+    {
+      "id": "brand-logo",
+      "kind": "logo",
+      "path": "input/assets/brand-logo.png",
+      "required": false,
+      "status": "missing",
+      "rights": "unknown"
+    },
+    {
+      "id": "approved-claims",
+      "kind": "document",
+      "path": "input/assets/approved-claims.md",
+      "required": true,
+      "status": "missing",
+      "rights": "unknown",
+      "notes": "价格、地址、营业时间和可核验卖点；禁止添加未经验证的功效或承诺"
+    },
+    {
+      "id": "host-consent-template",
+      "kind": "document",
+      "path": "input/assets/host-consent-template.txt",
+      "required": false,
+      "status": "present",
+      "rights": "owned",
+      "sha256": "7b6f5e078fcdda5b630f2d95a7ebcf56d89dd438559379e714b5a32cda648d68",
+      "notes": "仓库自带模板；演示 present 素材与真实哈希的写法"
+    }
+  ],
+  "preserve": [
+    "shot_order",
+    "shot_duration",
+    "camera_motion",
+    "cut_rhythm",
+    "caption_style",
+    "audio_structure",
+    "hook_to_cta_structure"
+  ],
+  "replacements": [
+    "host",
+    "store_exterior",
+    "store_interior",
+    "signature_dish",
+    "brand_logo",
+    "script",
+    "price_and_address"
+  ],
+  "credentials": [
+    {
+      "env": "REA_VLM_API_KEY"
+    }
+  ]
+}

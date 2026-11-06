@@ -14,6 +14,7 @@ dependencies = [
   "opencv-python-headless>=4.8,<5",
   "Pillow>=9.0",
   "PyYAML>=6.0",
+  "jsonschema>=4,<5",
   "onnxruntime>=1.16",   # 人声/配乐分离（UVR MDX-Net，首次运行自动下载约 67 MB 模型）
 ]
 
@@ -21,7 +22,7 @@ dependencies = [
 # rapidocr 会顺带装 opencv-python（带 GUI 的那套），和上面的 headless 抢同一个 cv2 目录；
 # scripts/install_skill.sh 装完会删掉它、重装 headless。手动安装见 setup.md。
 ocr = ["rapidocr-onnxruntime>=1.3,<2"]
-dev = ["pytest>=7", "jsonschema>=4"]
+dev = ["pytest>=7"]
 
 [project.scripts]
 rea-video = "rea_video.cli:main"
@@ -30,7 +31,7 @@ rea-video = "rea_video.cli:main"
 include = ["rea_video*"]
 
 [tool.setuptools.package-data]
-rea_video = ["capabilities/*.yaml", "capabilities/*.json", "capabilities/*.md", "capabilities/models/*.yaml"]
+rea_video = ["capabilities/*.yaml", "capabilities/*.json", "capabilities/*.md", "capabilities/models/*.yaml", "project/schemas/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

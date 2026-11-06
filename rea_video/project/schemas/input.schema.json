@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/FlapPearLabs/rea-video/schemas/input.schema.json",
+  "title": "rea-video structured project input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "profile", "reference", "assets", "preserve", "replacements"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "profile": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "media_type", "required", "sha256"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "media_type": {"const": "video"},
+        "required": {"const": true},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      }
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "path", "required", "status", "rights"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "kind": {"enum": ["person", "scene", "product", "logo", "document", "audio", "video", "other"]},
+          "path": {"type": "string", "minLength": 1},
+          "required": {"type": "boolean"},
+          "status": {"enum": ["present", "missing", "unknown"]},
+          "rights": {"enum": ["owned", "licensed", "consent", "unknown"]},
+          "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "notes": {"type": "string"}
+        }
+      }
+    },
+    "preserve": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "replacements": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "credentials": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["env"],
+        "properties": {
+          "env": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}
+        }
+      }
+    }
+  }
+}

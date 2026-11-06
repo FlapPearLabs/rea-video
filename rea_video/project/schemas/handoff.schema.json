@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/FlapPearLabs/rea-video/schemas/handoff.schema.json",
+  "title": "rea-video structured project handoff envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "id", "sequence", "created_at", "from_state", "to_state",
+    "state_after", "agent", "coordinator", "summary", "inputs", "artifacts", "decisions",
+    "open_questions", "next_actions", "acceptance", "previous_handoff"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "id": {"type": "string", "minLength": 1},
+    "sequence": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "minLength": 1},
+    "from_state": {"enum": ["initialized", "input_validated", "decomposed", "reviewed", "planned", "remaking", "assembled", "verified", "delivered", "blocked"]},
+    "to_state": {"enum": ["initialized", "input_validated", "decomposed", "reviewed", "planned", "remaking", "assembled", "verified", "delivered", "blocked"]},
+    "state_after": {"enum": ["initialized", "input_validated", "decomposed", "reviewed", "planned", "remaking", "assembled", "verified", "delivered", "blocked"]},
+    "agent": {"type": "string", "minLength": 1},
+    "coordinator": {"type": "string", "minLength": 1},
+    "summary": {"type": "string", "minLength": 1},
+    "inputs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "path", "sha256", "kind", "stage"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "kind": {"enum": ["analysis", "media", "plan", "handoff", "output", "other"]},
+          "stage": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "decisions": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "open_questions": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "next_actions": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "acceptance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check", "status", "evidence"],
+        "properties": {
+          "check": {"type": "string", "minLength": 1},
+          "status": {"enum": ["passed", "failed"]},
+          "evidence": {"type": "string"}
+        }
+      }
+    },
+    "previous_handoff": {"type": ["string", "null"]}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"state_after": {"const": "blocked"}},
+        "required": ["state_after"]
+      },
+      "then": {},
+      "else": {
+        "properties": {
+          "artifacts": {"minItems": 1},
+          "acceptance": {
+            "minItems": 1,
+            "contains": {
+              "type": "object",
+              "required": ["status"],
+              "properties": {"status": {"const": "passed"}}
+            },
+            "not": {
+              "contains": {
+                "type": "object",
+                "required": ["status"],
+                "properties": {"status": {"const": "failed"}}
+              }
+            }
+          },
+          "next_actions": {"minItems": 1}
+        }
+      }
+    }
+  ]
+}
